@@ -53,6 +53,10 @@ export async function fetchHistory(id: string): Promise<LogElement[]> {
 }
 
 let lastLogitemWasStream = false;
+
+// Pre-compile regex for better performance
+const endTokensRegex = /<\|im_end\|>|<\|end_of_turn\|>/g;
+
 export function parseLogArray(history: LogElement[]) {
     if (!history) {
         return [];
@@ -60,7 +64,7 @@ export function parseLogArray(history: LogElement[]) {
     let logBuffer: LogElement[] = [];
     for (const historyItem of history) {
         if (historyItem.message) {
-            historyItem.message = historyItem.message.replaceAll('<|im_end|>', '').replaceAll('<|end_of_turn|>', '');
+            historyItem.message = historyItem.message.replace(endTokensRegex, '');
             if (historyItem.stream) {
                 if (lastLogitemWasStream) {
                     logBuffer[logBuffer.length - 1].message += historyItem.message;

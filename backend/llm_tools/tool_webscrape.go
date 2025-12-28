@@ -22,7 +22,10 @@ type WebScrape struct {
 	Settings         utils.ClientSettings
 }
 
-var usedLinks = make(map[string][]string)
+var (
+	usedLinks   = make(map[string][]string)
+	usedLinksMu sync.RWMutex
+)
 
 var _ tools.Tool = WebScrape{}
 
@@ -64,9 +67,14 @@ func (ws WebScrape) Call(ctx context.Context, input string) (string, error) {
 
 	wg := sync.WaitGroup{}
 	counter := 0
+	
+	usedLinksMu.RLock()
+	sessionLinks := usedLinks[ws.SessionString]
+	usedLinksMu.RUnlock()
+	
 	for i := range apiResponse.Results {
 		skip := false
-		for _, usedLink := range usedLinks[ws.SessionString] {
+		for _, usedLink := range sessionLinks {
 			if usedLink == apiResponse.Results[i].URL {
 				skip = true
 				break
@@ -114,7 +122,13 @@ func (ws WebScrape) Call(ctx context.Context, input string) (string, error) {
 				ch.HandleSourceAdded(ctx, newSource)
 			}
 		}(i)
-		usedLinks[ws.SessionString] = append(usedLinks[ws.SessionString], apiResponse.Results[i].URL)
+		
+		// Add to used links with limit
+		usedLinksMu.Lock()
+		if len(usedLinks[ws.SessionString]) < MaxLinksPerSession {
+			usedLinks[ws.SessionString] = append(usedLinks[ws.SessionString], apiResponse.Results[i].URL)
+		}
+		usedLinksMu.Unlock()
 	}
 	wg.Wait()
 	svb := SearchVectorDB{
@@ -136,4 +150,11 @@ func (ws WebScrape) Call(ctx context.Context, input string) (string, error) {
 	}
 
 	return result, nil
+}
+
+// CleanupWebScrapeSession removes session data from global maps to prevent memory leaks
+func CleanupWebScrapeSession(sessionID string) {
+	usedLinksMu.Lock()
+	delete(usedLinks, sessionID)
+	usedLinksMu.Unlock()
 }
