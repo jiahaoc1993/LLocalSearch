@@ -22,7 +22,12 @@ type WebSearch struct {
 	Settings         utils.ClientSettings
 }
 
-var simpleUsedLinks = make(map[string][]string)
+const MaxLinksPerSession = 100 // Prevent unlimited memory growth
+
+var (
+	simpleUsedLinks   = make(map[string][]string)
+	simpleUsedLinksMu sync.RWMutex
+)
 
 var _ tools.Tool = WebSearch{}
 
@@ -61,9 +66,14 @@ func (ws WebSearch) Call(ctx context.Context, input string) (string, error) {
 	wg := sync.WaitGroup{}
 	counter := 0
 	summaryResults := []string{}
+	
+	simpleUsedLinksMu.RLock()
+	sessionLinks := simpleUsedLinks[ws.SessionString]
+	simpleUsedLinksMu.RUnlock()
+	
 	for i := range apiResponse.Results {
 		skip := false
-		for _, usedLink := range simpleUsedLinks[ws.SessionString] {
+		for _, usedLink := range sessionLinks {
 			if usedLink == apiResponse.Results[i].URL {
 				slog.Warn("Skipping already used link during SimpleWebSearch", "link", apiResponse.Results[i].URL)
 				skip = true
@@ -107,7 +117,13 @@ func (ws WebSearch) Call(ctx context.Context, input string) (string, error) {
 				ch.HandleSourceAdded(ctx, newSource)
 			}
 		}(i)
-		simpleUsedLinks[ws.SessionString] = append(simpleUsedLinks[ws.SessionString], apiResponse.Results[i].URL)
+		
+		// Add to used links with limit
+		simpleUsedLinksMu.Lock()
+		if len(simpleUsedLinks[ws.SessionString]) < MaxLinksPerSession {
+			simpleUsedLinks[ws.SessionString] = append(simpleUsedLinks[ws.SessionString], apiResponse.Results[i].URL)
+		}
+		simpleUsedLinksMu.Unlock()
 	}
 	wg.Wait()
 
@@ -126,4 +142,11 @@ func (ws WebSearch) Call(ctx context.Context, input string) (string, error) {
 	}
 
 	return string(result), nil
+}
+
+// CleanupSession removes session data from global maps to prevent memory leaks
+func CleanupSimpleWebSearchSession(sessionID string) {
+	simpleUsedLinksMu.Lock()
+	delete(simpleUsedLinks, sessionID)
+	simpleUsedLinksMu.Unlock()
 }

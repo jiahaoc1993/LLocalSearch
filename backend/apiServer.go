@@ -109,11 +109,13 @@ func modelsHandler(w http.ResponseWriter, r *http.Request) {
 	// remove the currently used embeddings model
 	// from the modellist
 	// TODO: find a way to remove all embeddings models
-	for i, model := range models {
-		if model == utils.EmbeddingsModel {
-			models = append(models[:i], models[i+1:]...)
+	filteredModels := make([]string, 0, len(models))
+	for _, model := range models {
+		if model != utils.EmbeddingsModel {
+			filteredModels = append(filteredModels, model)
 		}
 	}
+	models = filteredModels
 
 	jsonModels, err := json.Marshal(models)
 	if err != nil {
@@ -129,7 +131,6 @@ func modelsHandler(w http.ResponseWriter, r *http.Request) {
 // TODO improve the amount of data that is sent
 // currently 99% of the data is empty json keys haha
 func loadChatHistory(w http.ResponseWriter, r *http.Request) {
-	time.Sleep(time.Millisecond * 200)
 	setCorsHeaders(w)
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -185,20 +186,35 @@ func chatListHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatIds := []utils.ChatListItem{}
+	type chatWithTimestamp struct {
+		item      utils.ChatListItem
+		timestamp int64
+	}
+	
+	chatsWithTimestamps := make([]chatWithTimestamp, 0, len(sessions))
 	for sessionid := range sessions {
-		chatIds = append(chatIds, utils.ChatListItem{
-			SessionId: sessionid,
-			Title:     sessions[sessionid].Title,
+		session := sessions[sessionid]
+		var timestamp int64
+		if len(session.Elements) > 0 {
+			timestamp = session.Elements[len(session.Elements)-1].TimeStamp
+		}
+		chatsWithTimestamps = append(chatsWithTimestamps, chatWithTimestamp{
+			item: utils.ChatListItem{
+				SessionId: sessionid,
+				Title:     session.Title,
+			},
+			timestamp: timestamp,
 		})
 	}
-	// sort chatIds by timestamp
-	// TODO HACK this is wildly inefficient
-	sort.Slice(chatIds, func(i, j int) bool {
-		iLen := len(sessions[chatIds[i].SessionId].Elements)
-		jLen := len(sessions[chatIds[j].SessionId].Elements)
-		return sessions[chatIds[i].SessionId].Elements[iLen-1].TimeStamp > sessions[chatIds[j].SessionId].Elements[jLen-1].TimeStamp
+	// sort chatIds by timestamp (most recent first)
+	sort.Slice(chatsWithTimestamps, func(i, j int) bool {
+		return chatsWithTimestamps[i].timestamp > chatsWithTimestamps[j].timestamp
 	})
+	
+	chatIds := make([]utils.ChatListItem, 0, len(chatsWithTimestamps))
+	for _, chat := range chatsWithTimestamps {
+		chatIds = append(chatIds, chat.item)
+	}
 
 	jsonChatIds, err := json.Marshal(chatIds)
 	if err != nil {

@@ -28,6 +28,9 @@
 	let innerWidth = 0;
 	let innerHeight = 0;
 
+	// Pre-compile regex for better performance
+	const endTokensRegex = /<\|im_end\|>|<\|end_of_turn\|>/g;
+
 	let chatLoadID = $page.params.slug;
 	let pageTitle = 'LLocalSearch';
 	function loadHistory(id: string, title: string) {
@@ -170,7 +173,7 @@
 					searchSources.push(log.source);
 					searchSources = searchSources;
 				}
-				log.message = log.message.replaceAll('<|im_end|>', '').replaceAll('<|end_of_turn|>', '');
+				log.message = log.message.replace(endTokensRegex, '');
 				if (log.stream) {
 					if (lastLogitemWasStream) {
 						currentLogs[currentLogs.length - 1].message += log.message;

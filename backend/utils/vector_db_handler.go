@@ -42,12 +42,14 @@ func saveToVectorDb(timeoutCtx context.Context, docs []schema.Document, sessionS
 	}
 
 	type meta = map[string]any
+	// Filter out empty documents to avoid issues
+	filteredDocs := make([]schema.Document, 0, len(docs))
 	for i := range docs {
-		if len(docs[i].PageContent) == 0 {
-			// remove the document from the list
-			docs = append(docs[:i], docs[i+1:]...)
+		if len(docs[i].PageContent) > 0 {
+			filteredDocs = append(filteredDocs, docs[i])
 		}
 	}
+	docs = filteredDocs
 
 	_, errAd := store.AddDocuments(timeoutCtx, docs)
 

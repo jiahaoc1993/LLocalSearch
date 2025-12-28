@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"sync"
 
 	"github.com/nilsherzig/LLocalSearch/utils"
 	"github.com/tmc/langchaingo/callbacks"
@@ -30,8 +31,14 @@ type Result struct {
 	Text string
 }
 
-var usedResults = make(map[string][]string)
-var usedSourcesInSession = make(map[string][]schema.Document)
+var (
+	usedResults           = make(map[string][]string)
+	usedSourcesInSession  = make(map[string][]schema.Document)
+	usedResultsMu         sync.RWMutex
+	usedSourcesInSessionMu sync.RWMutex
+)
+
+const MaxSessionEntries = 1000 // Prevent unlimited memory growth
 
 func (c SearchVectorDB) Description() string {
 	return "Use this tool to search through already added files or websites within a vector database. The most similar websites or documents to your input will be returned to you."
@@ -81,13 +88,17 @@ func (c SearchVectorDB) Call(ctx context.Context, input string) (string, error) 
 
 	var results []Result
 
+	usedResultsMu.RLock()
+	searchResults := usedResults[searchIdentifier]
+	usedResultsMu.RUnlock()
+
 	for _, doc := range docs {
 		newResult := Result{
 			Text: doc.PageContent,
 		}
 
 		skip := false
-		for _, usedLink := range usedResults[searchIdentifier] {
+		for _, usedLink := range searchResults {
 			if usedLink == newResult.Text {
 				skip = true
 				break
@@ -97,7 +108,11 @@ func (c SearchVectorDB) Call(ctx context.Context, input string) (string, error) 
 			continue
 		}
 
-		usedSourcesInSession[c.SessionString] = append(usedSourcesInSession[c.SessionString], doc)
+		usedSourcesInSessionMu.Lock()
+		if len(usedSourcesInSession[c.SessionString]) < MaxSessionEntries {
+			usedSourcesInSession[c.SessionString] = append(usedSourcesInSession[c.SessionString], doc)
+		}
+		usedSourcesInSessionMu.Unlock()
 
 		ch, ok := c.CallbacksHandler.(utils.CustomHandler)
 		if ok {
@@ -111,7 +126,12 @@ func (c SearchVectorDB) Call(ctx context.Context, input string) (string, error) 
 			})
 		}
 		results = append(results, newResult)
-		usedResults[searchIdentifier] = append(usedResults[searchIdentifier], newResult.Text)
+		
+		usedResultsMu.Lock()
+		if len(usedResults[searchIdentifier]) < MaxSessionEntries {
+			usedResults[searchIdentifier] = append(usedResults[searchIdentifier], newResult.Text)
+		}
+		usedResultsMu.Unlock()
 	}
 
 	if len(docs) == 0 {
@@ -138,4 +158,26 @@ func extractBaseDomain(inputURL string) (string, error) {
 		return "", err
 	}
 	return parsedURL.Host, nil
+}
+
+// CleanupVectorDBSession removes session data from global maps to prevent memory leaks
+func CleanupVectorDBSession(sessionID string) {
+	usedSourcesInSessionMu.Lock()
+	delete(usedSourcesInSession, sessionID)
+	usedSourcesInSessionMu.Unlock()
+	
+	// Clean up all search identifiers for this session
+	// Keys are in format "sessionID-searchTerm"
+	sessionPrefix := sessionID + "-"
+	usedResultsMu.Lock()
+	keysToDelete := make([]string, 0)
+	for key := range usedResults {
+		if len(key) > len(sessionPrefix) && key[:len(sessionPrefix)] == sessionPrefix {
+			keysToDelete = append(keysToDelete, key)
+		}
+	}
+	for _, key := range keysToDelete {
+		delete(usedResults, key)
+	}
+	usedResultsMu.Unlock()
 }
