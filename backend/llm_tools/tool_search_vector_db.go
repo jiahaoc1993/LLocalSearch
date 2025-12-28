@@ -38,7 +38,7 @@ var (
 	usedSourcesInSessionMu sync.RWMutex
 )
 
-const MaxUsedResults = 1000 // Prevent unlimited memory growth
+const MaxSessionEntries = 1000 // Prevent unlimited memory growth
 
 func (c SearchVectorDB) Description() string {
 	return "Use this tool to search through already added files or websites within a vector database. The most similar websites or documents to your input will be returned to you."
@@ -109,7 +109,7 @@ func (c SearchVectorDB) Call(ctx context.Context, input string) (string, error) 
 		}
 
 		usedSourcesInSessionMu.Lock()
-		if len(usedSourcesInSession[c.SessionString]) < MaxUsedResults {
+		if len(usedSourcesInSession[c.SessionString]) < MaxSessionEntries {
 			usedSourcesInSession[c.SessionString] = append(usedSourcesInSession[c.SessionString], doc)
 		}
 		usedSourcesInSessionMu.Unlock()
@@ -128,7 +128,7 @@ func (c SearchVectorDB) Call(ctx context.Context, input string) (string, error) 
 		results = append(results, newResult)
 		
 		usedResultsMu.Lock()
-		if len(usedResults[searchIdentifier]) < MaxUsedResults {
+		if len(usedResults[searchIdentifier]) < MaxSessionEntries {
 			usedResults[searchIdentifier] = append(usedResults[searchIdentifier], newResult.Text)
 		}
 		usedResultsMu.Unlock()
@@ -167,11 +167,12 @@ func CleanupVectorDBSession(sessionID string) {
 	usedSourcesInSessionMu.Unlock()
 	
 	// Clean up all search identifiers for this session
+	// Keys are in format "sessionID-searchTerm"
+	sessionPrefix := sessionID + "-"
 	usedResultsMu.Lock()
 	keysToDelete := make([]string, 0)
 	for key := range usedResults {
-		// Keys are in format "sessionID-searchTerm"
-		if len(key) > len(sessionID) && key[:len(sessionID)] == sessionID {
+		if len(key) > len(sessionPrefix) && key[:len(sessionPrefix)] == sessionPrefix {
 			keysToDelete = append(keysToDelete, key)
 		}
 	}
